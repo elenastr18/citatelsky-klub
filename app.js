@@ -34,11 +34,17 @@
     try {
       if (DEMO) res = await window.KLUB_DEMO.handle(body);
       else {
-        const r = await fetch(C.API_URL, { method: 'POST', body: JSON.stringify(body) });
-        res = await r.json();
+        const ctl = window.AbortController ? new AbortController() : null;
+        const tm = ctl && setTimeout(() => ctl.abort(), 45000);
+        try {
+          const r = await fetch(C.API_URL, { method: 'POST', body: JSON.stringify(body), signal: ctl && ctl.signal });
+          res = await r.json();
+        } finally { if (tm) clearTimeout(tm); }
       }
     } catch (e) {
-      throw new Error('Nepodarilo sa spojiť so serverom. Skontroluj internet a skús znova.');
+      throw new Error(e && e.name === 'AbortError'
+        ? 'Server neodpovedá. Skús to o chvíľu znova.'
+        : 'Nepodarilo sa spojiť so serverom. Skontroluj internet a skús znova.');
     }
     if (!res.ok) {
       const err = new Error(res.error || 'Niečo sa pokazilo.');
@@ -46,6 +52,7 @@
       throw err;
     }
     S.data = res.data;
+    if (!DEMO) store.set('klub_data', res.data); // web sa nabudúce otvorí hneď, kým sa dáta obnovia
     return res.data;
   }
 
@@ -138,7 +145,7 @@
   /* ---------------- Prihlásenie ---------------- */
   function logout() {
     S.auth = null; S.data = null;
-    store.del('klub_auth');
+    store.del('klub_auth'); store.del('klub_data');
     closeModal();
     render();
   }
@@ -730,7 +737,7 @@
   const FORMS = {
     async login(f) {
       const btn = $('button', f);
-      btn.disabled = true; btn.textContent = 'Overujem…';
+      btn.disabled = true; btn.textContent = 'Overujem… chvíľu to trvá';
       const prev = store.get('klub_auth');
       S.auth = { heslo: f.heslo.value, ja: prev && prev.ja ? prev.ja : '' };
       try {
@@ -827,10 +834,13 @@
   /* ---------------- Štart ---------------- */
   (async function start() {
     if (S.auth && S.auth.heslo) {
+      const ulozene = !DEMO && store.get('klub_data');
+      if (ulozene && ulozene.knihy) S.data = ulozene;
       render();
       try { await api('nacitaj'); }
       catch (e) {
-        if (e.auth) { S.auth = null; store.del('klub_auth'); }
+        if (e.auth) { S.auth = null; S.data = null; store.del('klub_auth'); store.del('klub_data'); }
+        else if (S.data) { toast('Nepodarilo sa obnoviť údaje, zobrazujem posledné uložené.', true); return; }
         else { $('#app').innerHTML = `<div class="login"><div class="login-card"><h1>Ups</h1><p>${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Skúsiť znova</button></div></div>`; return; }
       }
     }
